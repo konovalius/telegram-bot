@@ -1,19 +1,4 @@
+ 
 meta:
-  environment: python
-  branch: master
-
-build:
-  dockerfile: Dockerfile
-
-env:
-  - name: BOT_TOKEN
-    type: secret
-  - name: LLM_API_KEY
-    type: secret
-  - name: LLM_BASE_URL
-    type: secret
-  - name: LLM_MODEL
-    type: secret
-
-run:
-  command: python bot.py
+  toolchain:
+    name: python
