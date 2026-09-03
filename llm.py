@@ -94,29 +94,19 @@ class LLMClient:
 # Проверенные бесплатные варианты. Ключ — короткий алиас для команды /model.
 FREE_PRESETS: dict[str, tuple[str, str, str]] = {
     # alias: (человекочитаемое имя, base_url, model id)
-    "llama": (
-        "Llama 3.3 70B · OpenRouter",
-        "https://openrouter.ai/api/v1",
-        "meta-llama/llama-3.3-70b-instruct:free",
+    "llama-8b": (
+        "Llama 3.1 8B · Groq (быстрая)",
+        "https://api.groq.com/openai/v1",
+        "llama-3.1-8b-instant",
     ),
-    "qwen": (
-        "Qwen3 Coder 480B · OpenRouter",
-        "https://openrouter.ai/api/v1",
-        "qwen/qwen3-coder:free",
-    ),
-    "deepseek": (
-        "DeepSeek R1 · OpenRouter",
-        "https://openrouter.ai/api/v1",
-        "deepseek/deepseek-r1:free",
-    ),
-    "groq": (
-        "Llama 3.3 70B · Groq (быстрый)",
+    "llama-70b": (
+        "Llama 3.3 70B · Groq (умная)",
         "https://api.groq.com/openai/v1",
         "llama-3.3-70b-versatile",
     ),
-    "gemini": (
-        "Gemini 2.5 Flash · Google",
-        "https://generativelanguage.googleapis.com/v1beta/openai",
-        "gemini-2.5-flash",
+    "gpt-oss": (
+        "GPT-OSS 120B · Groq",
+        "https://api.groq.com/openai/v1",
+        "openai/gpt-oss-120b",
     ),
 }
