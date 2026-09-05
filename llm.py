@@ -37,7 +37,7 @@ class GigaChatLLM:
         # HTTP клиент
         self.client = httpx.AsyncClient(timeout=timeout, verify=False)
     
-    async def _get_access_token(self) -> str:
+        async def _get_access_token(self) -> str:
         """Получает OAuth2 токен от GigaChat"""
         # Проверяем, есть ли валидный токен
         if self._access_token and time.time() < self._token_expires_at:
@@ -46,18 +46,19 @@ class GigaChatLLM:
         logger.info("Получаем новый OAuth2 токен от GigaChat...")
         
         try:
+            # GigaChat персональный использует Bearer авторизацию с Client Secret
+            import base64
+            auth_data = base64.b64encode(f"{self.client_id}:".encode()).decode()
+            
             response = await self.client.post(
                 "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
                     "Accept": "application/json",
                     "RqUID": f"{time.time_ns()}",
+                    "Authorization": f"Basic {auth_data}",
                 },
-                data={
-                    "scope": "GIGACHAT_API_PERS",
-                    "grant_type": "client_credentials",
-                },
-                auth=(self.client_id, ""),
+                data="scope=GIGACHAT_API_PERS",
             )
             response.raise_for_status()
             
