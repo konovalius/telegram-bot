@@ -36,7 +36,7 @@ class GigaChatLLM:
         
         self.client = httpx.AsyncClient(timeout=timeout, verify=False)
     
-async def _get_access_token(self) -> str:
+    async def _get_access_token(self) -> str:
         """Получает OAuth2 токен от GigaChat"""
         if self._access_token and time.time() < self._token_expires_at:
             return self._access_token
