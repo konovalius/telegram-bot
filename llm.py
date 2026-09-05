@@ -36,7 +36,7 @@ class GigaChatLLM:
         
         self.client = httpx.AsyncClient(timeout=timeout, verify=False)
     
-    async def _get_access_token(self) -> str:
+        async def _get_access_token(self) -> str:
         """Получает OAuth2 токен от GigaChat"""
         if self._access_token and time.time() < self._token_expires_at:
             return self._access_token
@@ -44,19 +44,24 @@ class GigaChatLLM:
         logger.info("Получаем новый OAuth2 токен от GigaChat...")
         
         try:
-            auth_data = base64.b64encode(f"{self.client_id}:".encode()).decode()
+            # GigaChat персональный: Client Secret в Basic Auth
+            auth_string = f"{self.client_id}:"
+            auth_bytes = base64.b64encode(auth_string.encode('utf-8'))
+            auth_header = f"Basic {auth_bytes.decode('utf-8')}"
             
             response = await self.client.post(
                 "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
                 headers={
+                    "Authorization": auth_header,
+                    "RqUID": str(time.time_ns()),
                     "Content-Type": "application/x-www-form-urlencoded",
-                    "Accept": "application/json",
-                    "RqUID": f"{time.time_ns()}",
-                    "Authorization": f"Basic {auth_data}",
                 },
-                data="scope=GIGACHAT_API_PERS",
+                content="scope=GIGACHAT_API_PERS",
             )
-            response.raise_for_status()
+            
+            if response.status_code != 200:
+                logger.error(f"OAuth ошибка {response.status_code}: {response.text}")
+                raise LLMError(f"GigaChat вернул {response.status_code}. Проверьте Client Secret в переменных окружения")
             
             data = response.json()
             self._access_token = data["access_token"]
@@ -67,8 +72,8 @@ class GigaChatLLM:
             return self._access_token
             
         except Exception as e:
-            logger.error(f"Ошибка получения OAuth2 токена: {e}")
-            raise LLMError(f"Не удалось получить токен GigaChat: {e}")
+            logger.error(f"Ошибка получения токена: {e}")
+            raise LLMError(f"Не удалось получить токен. Проверьте Client Secret: {e}")
     
     async def complete(self, messages: list[dict]) -> str:
         """Отправка запроса к GigaChat"""
