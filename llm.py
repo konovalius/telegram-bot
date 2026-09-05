@@ -1,251 +1,152 @@
-"""
-LLM модуль с поддержкой GigaChat OAuth2
-Автоматически получает и обновляет токен доступа
-"""
-import os
-import httpx
-import uuid
-import base64
+"""LLM клиент для работы с GigaChat через OAuth2"""
+
+from __future__ import annotations
+
 import logging
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
+import time
+from typing import Any
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
 
 class GigaChatLLM:
-    """LLM клиент с автоматическим управлением OAuth2 токеном для GigaChat"""
+    """Клиент для работы с GigaChat API через OAuth2"""
     
     def __init__(
         self,
-        client_secret: str,
+        client_id: str,
         base_url: str = "https://api.giga.chat/v1",
         model: str = "GigaChat",
-        scope: str = "GIGACHAT_API_PERS"
+        max_tokens: int = 2048,
+        temperature: float = 0.7,
+        timeout: int = 120,
     ):
-        """
-        Args:
-            client_secret: Client Secret из Sber Developer Studio
-            base_url: Базовый URL для GigaChat API
-            model: Название модели (GigaChat, GigaChat-Pro, GigaChat-Max)
-            scope: Scope для физ/юр лиц (GIGACHAT_API_PERS или GIGACHAT_API_CORP)
-        """
-        self.client_secret = client_secret
+        self.client_id = client_id
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self.scope = scope
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.timeout = timeout
         
-        # OAuth2 параметры
-        self.oauth_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
-        self.access_token: Optional[str] = None
-        self.token_expires_at: Optional[datetime] = None
+        # OAuth2 токен и его время истечения
+        self._access_token: str | None = None
+        self._token_expires_at: float = 0
         
-        # HTTP клиент с SSL verify=False для корп. сертификата Сбера
-        self.http_client = httpx.Client(verify=False, timeout=60.0)
+        # HTTP клиент
+        self.client = httpx.AsyncClient(timeout=timeout, verify=False)
     
-    def _get_authorization_header(self) -> str:
-        """Создаёт Authorization заголовок для OAuth2 запроса"""
-        # Client Secret уже содержит Client ID и Secret в формате UUID
-        # Кодируем в Base64
-        credentials = base64.b64encode(self.client_secret.encode()).decode()
-        return f"Basic {credentials}"
-    
-    def _refresh_token(self) -> None:
-        """Получает новый access token через OAuth2"""
+    async def _get_access_token(self) -> str:
+        """Получает OAuth2 токен от GigaChat"""
+        # Проверяем, есть ли валидный токен
+        if self._access_token and time.time() < self._token_expires_at:
+            return self._access_token
+        
+        logger.info("Получаем новый OAuth2 токен от GigaChat...")
+        
         try:
-            headers = {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-                "RqUID": str(uuid.uuid4()),
-                "Authorization": self._get_authorization_header()
-            }
-            
-            data = {"scope": self.scope}
-            
-            logger.info("Запрашиваем новый access token от GigaChat...")
-            response = self.http_client.post(
-                self.oauth_url,
-                headers=headers,
-                data=data
+            response = await self.client.post(
+                "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                    "RqUID": f"{time.time_ns()}",
+                },
+                data={
+                    "scope": "GIGACHAT_API_PERS",
+                    "grant_type": "client_credentials",
+                },
+                auth=(self.client_id, ""),
             )
             response.raise_for_status()
             
-            token_data = response.json()
-            self.access_token = token_data["access_token"]
+            data = response.json()
+            self._access_token = data["access_token"]
+            # Токен живёт 30 минут, обновим за минуту до истечения
+            expires_in = data.get("expires_in", 1800)
+            self._token_expires_at = time.time() + expires_in - 60
             
-            # Токен действует expires_at миллисекунд
-            expires_in_ms = token_data.get("expires_at", 1800000)  # По умолчанию 30 минут
-            expires_in_seconds = expires_in_ms / 1000
-            self.token_expires_at = datetime.now() + timedelta(seconds=expires_in_seconds - 60)
+            logger.info("OAuth2 токен успешно получен")
+            return self._access_token
             
-            logger.info(f"Access token получен, истекает через {expires_in_seconds/60:.1f} минут")
-            
-        except httpx.HTTPStatusError as e:
-            logger.error(f"OAuth2 ошибка {e.response.status_code}: {e.response.text}")
-            raise Exception(f"Не удалось получить access token: {e.response.status_code}")
         except Exception as e:
-            logger.error(f"Ошибка при получении токена: {e}")
-            raise
+            logger.error(f"Ошибка получения OAuth2 токена: {e}")
+            raise LLMError(f"Не удалось получить токен GigaChat: {e}")
     
-    def _ensure_token(self) -> None:
-        """Проверяет валидность токена и обновляет при необходимости"""
-        if self.access_token is None or self.token_expires_at is None:
-            self._refresh_token()
-        elif datetime.now() >= self.token_expires_at:
-            logger.info("Access token истёк, обновляем...")
-            self._refresh_token()
-    
-    def chat_completion(
-        self,
-        messages: List[Dict[str, str]],
-        temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-        stream: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Отправляет запрос к GigaChat API
-        
-        Args:
-            messages: Список сообщений в формате OpenAI
-            temperature: Температура генерации
-            max_tokens: Максимум токенов в ответе
-            stream: Потоковая генерация (пока не поддерживается)
-        
-        Returns:
-            Ответ в формате OpenAI-compatible
-        """
-        self._ensure_token()
-        
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature
-        }
-        
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
+    async def complete(self, messages: list[dict]) -> str:
+        """Отправка запроса к GigaChat"""
+        token = await self._get_access_token()
         
         try:
-            url = f"{self.base_url}/chat/completions"
-            logger.info(f"Отправляем запрос к GigaChat: {self.model}")
-            
-            response = self.http_client.post(url, headers=headers, json=payload)
+            response = await self.client.post(
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "max_tokens": self.max_tokens,
+                    "temperature": self.temperature,
+                },
+            )
             response.raise_for_status()
             
-            return response.json()
+            data = response.json()
+            content = data["choices"][0]["message"]["content"]
+            logger.info(f"Получен ответ от {self.model}, {len(content)} символов")
+            return content
             
         except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            error_text = e.response.text
-            
-            logger.error(f"GigaChat HTTP {status}: {error_text}")
-            
-            # Пробуем распарсить ошибку
-            try:
-                error_data = e.response.json()
-                error_msg = error_data.get("error", {}).get("message", error_text)
-            except:
-                error_msg = error_text
-            
-            raise Exception(f"GigaChat API ошибка {status}: {error_msg}")
-        
+            logger.error(f"Ошибка HTTP {e.response.status_code}: {e.response.text}")
+            raise LLMError(f"GigaChat API вернул ошибку {e.response.status_code}")
         except Exception as e:
-            logger.error(f"Ошибка при обращении к GigaChat: {e}")
-            raise
+            logger.error(f"Ошибка LLM запроса: {e}")
+            raise LLMError(f"Ошибка при запросе к GigaChat: {e}")
     
-    def close(self):
+    async def close(self):
         """Закрывает HTTP клиент"""
-        self.http_client.close()
+        if self.client:
+            await self.client.aclose()
 
 
 class LLMClient:
-    """
-    Универсальный LLM клиент с автоопределением провайдера
-    Совместим со старым интерфейсом бота
-    """
+    """Обёртка для работы с GigaChat (совместимость со старым кодом)"""
     
-    def __init__(self):
-        self.base_url = os.getenv("LLM_BASE_URL", "https://api.giga.chat/v1")
-        self.api_key = os.getenv("LLM_API_KEY", "")
-        self.model = os.getenv("LLM_MODEL", "GigaChat")
-        
-        # Определяем провайдера
-        if "giga.chat" in self.base_url.lower() or "gigachat" in self.base_url.lower():
-            self.provider = "gigachat"
-            logger.info(f"Используем GigaChat провайдер: {self.model}")
-            self.client = GigaChatLLM(
-                client_secret=self.api_key,
-                base_url=self.base_url,
-                model=self.model
-            )
-        else:
-            # Для других провайдеров используем OpenAI-совместимый клиент
-            self.provider = "openai"
-            logger.info(f"Используем OpenAI-совместимый провайдер")
-            self.client = httpx.Client(timeout=60.0)
-    
-    def get_completion(
+    def __init__(
         self,
-        messages: List[Dict[str, str]],
+        api_key: str,
+        base_url: str,
+        model: str,
+        max_tokens: int = 2048,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
-    ) -> str:
-        """
-        Получает ответ от LLM (совместимый интерфейс)
+        timeout: int = 120,
+        proxy: str | None = None,
+    ):
+        self.model = model
+        self.max_tokens = max_tokens
+        self.temperature = temperature
         
-        Returns:
-            Текст ответа от модели
-        """
-        try:
-            if self.provider == "gigachat":
-                response = self.client.chat_completion(
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                )
-            else:
-                # OpenAI-совместимый запрос
-                headers = {
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json"
-                }
-                
-                payload = {
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": temperature
-                }
-                
-                if max_tokens:
-                    payload["max_tokens"] = max_tokens
-                
-                url = f"{self.base_url}/chat/completions"
-                resp = self.client.post(url, headers=headers, json=payload)
-                resp.raise_for_status()
-                response = resp.json()
-            
-            # Извлекаем текст ответа
-            return response["choices"][0]["message"]["content"]
-        
-        except Exception as e:
-            logger.error(f"Ошибка LLM запроса: {e}")
-            raise
+        # Создаём клиент GigaChat
+        self._client = GigaChatLLM(
+            client_id=api_key,
+            base_url=base_url,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
+        )
     
-    def close(self):
+    async def complete(self, messages: list[dict]) -> str:
+        """Отправка запроса к GigaChat"""
+        return await self._client.complete(messages)
+    
+    async def close(self):
         """Закрывает клиент"""
-        if self.provider == "gigachat":
-            self.client.close()
-        else:
-            self.client.close()
+        await self._client.close()
 
-
-# Экспорт для совместимости
-__all__ = ["LLMClient", "GigaChatLLM"]
 
 # Исключение для ошибок LLM
 class LLMError(Exception):
@@ -260,5 +161,5 @@ FREE_PRESETS = {
 }
 
 
-# Экспорт
+# Экспорт для совместимости
 __all__ = ["LLMClient", "GigaChatLLM", "LLMError", "FREE_PRESETS"]
