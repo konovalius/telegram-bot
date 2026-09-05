@@ -246,3 +246,19 @@ class LLMClient:
 
 # Экспорт для совместимости
 __all__ = ["LLMClient", "GigaChatLLM"]
+
+# Исключение для ошибок LLM
+class LLMError(Exception):
+    """Ошибка при запросе к LLM"""
+    pass
+
+
+# Пресеты моделей для команды /model
+FREE_PRESETS = {
+    "gigachat": ("GigaChat", "https://api.giga.chat/v1", "GigaChat"),
+    "gigachat-pro": ("GigaChat Pro", "https://api.giga.chat/v1", "GigaChat-Pro"),
+}
+
+
+# Экспорт
+__all__ = ["LLMClient", "GigaChatLLM", "LLMError", "FREE_PRESETS"]
