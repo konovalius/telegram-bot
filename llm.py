@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import time
 from typing import Any
@@ -30,24 +31,19 @@ class GigaChatLLM:
         self.temperature = temperature
         self.timeout = timeout
         
-        # OAuth2 токен и его время истечения
         self._access_token: str | None = None
         self._token_expires_at: float = 0
         
-        # HTTP клиент
         self.client = httpx.AsyncClient(timeout=timeout, verify=False)
     
-        async def _get_access_token(self) -> str:
+    async def _get_access_token(self) -> str:
         """Получает OAuth2 токен от GigaChat"""
-        # Проверяем, есть ли валидный токен
         if self._access_token and time.time() < self._token_expires_at:
             return self._access_token
         
         logger.info("Получаем новый OAuth2 токен от GigaChat...")
         
         try:
-            # GigaChat персональный использует Bearer авторизацию с Client Secret
-            import base64
             auth_data = base64.b64encode(f"{self.client_id}:".encode()).decode()
             
             response = await self.client.post(
@@ -64,7 +60,6 @@ class GigaChatLLM:
             
             data = response.json()
             self._access_token = data["access_token"]
-            # Токен живёт 30 минут, обновим за минуту до истечения
             expires_in = data.get("expires_in", 1800)
             self._token_expires_at = time.time() + expires_in - 60
             
@@ -130,7 +125,6 @@ class LLMClient:
         self.max_tokens = max_tokens
         self.temperature = temperature
         
-        # Создаём клиент GigaChat
         self._client = GigaChatLLM(
             client_id=api_key,
             base_url=base_url,
@@ -149,18 +143,15 @@ class LLMClient:
         await self._client.close()
 
 
-# Исключение для ошибок LLM
 class LLMError(Exception):
     """Ошибка при запросе к LLM"""
     pass
 
 
-# Пресеты моделей для команды /model
 FREE_PRESETS = {
     "gigachat": ("GigaChat", "https://api.giga.chat/v1", "GigaChat"),
     "gigachat-pro": ("GigaChat Pro", "https://api.giga.chat/v1", "GigaChat-Pro"),
 }
 
 
-# Экспорт для совместимости
 __all__ = ["LLMClient", "GigaChatLLM", "LLMError", "FREE_PRESETS"]
